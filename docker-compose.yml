@@ -1,0 +1,295 @@
+version: '3.8'
+
+services:
+  # -------------------------------------------------------------
+  # Infrastructure: ZooKeeper & Apache Kafka
+  # -------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: flightdeck-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - flightdeck-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: flightdeck-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - flightdeck-net
+
+  init-kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: flightdeck-init-kafka
+    depends_on:
+      - kafka
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      # blocks until kafka is reachable
+      kafka-topics --bootstrap-server kafka:9092 --list
+
+      echo -e 'Creating Flightdeck Kafka topics...'
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic flightdeck.telemetry --replication-factor 1 --partitions 3
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic flightdeck.events --replication-factor 1 --partitions 3
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic flightdeck.incidents --replication-factor 1 --partitions 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic flightdeck.replay --replication-factor 1 --partitions 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic blackbox.telemetry --replication-factor 1 --partitions 3
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic blackbox.events --replication-factor 1 --partitions 3
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic blackbox.incidents --replication-factor 1 --partitions 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic blackbox.replay --replication-factor 1 --partitions 1
+      kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic orders.created --replication-factor 1 --partitions 3
+
+      echo -e 'Kafka topics successfully initialized.'
+      "
+    networks:
+      - flightdeck-net
+
+  # -------------------------------------------------------------
+  # Infrastructure: PostgreSQL & Redis
+  # -------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: flightdeck-postgres
+    environment:
+      POSTGRES_DB: flightdeck_sample
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flightdeck-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: flightdeck-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - flightdeck-net
+
+  # -------------------------------------------------------------
+  # Observability: OpenTelemetry Collector Contrib
+  # -------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.95.0
+    container_name: flightdeck-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      - kafka
+    networks:
+      - flightdeck-net
+
+  # -------------------------------------------------------------
+  # Sample Application: Microservices
+  # -------------------------------------------------------------
+  api-gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      args:
+        MODULE_NAME: sample-application/api-gateway
+        MODULE_PATH: sample-application/api-gateway
+    container_name: flightdeck-api-gateway
+    ports:
+      - "8081:8081"
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      ORDER_SERVICE_URL: http://order-service:8082
+      PAYMENT_SERVICE_URL: http://payment-service:8083
+      INVENTORY_SERVICE_URL: http://inventory-service:8084
+      NOTIFICATION_SERVICE_URL: http://notification-service:8085
+    depends_on:
+      - otel-collector
+    networks:
+      - flightdeck-net
+
+  order-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      args:
+        MODULE_NAME: sample-application/order-service
+        MODULE_PATH: sample-application/order-service
+    container_name: flightdeck-order-service
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/flightdeck_sample
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgrespassword
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      PAYMENT_SERVICE_URL: http://payment-service:8083
+      INVENTORY_SERVICE_URL: http://inventory-service:8084
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    networks:
+      - flightdeck-net
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      args:
+        MODULE_NAME: sample-application/payment-service
+        MODULE_PATH: sample-application/payment-service
+    container_name: flightdeck-payment-service
+    ports:
+      - "8083:8083"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - flightdeck-net
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      args:
+        MODULE_NAME: sample-application/inventory-service
+        MODULE_PATH: sample-application/inventory-service
+    container_name: flightdeck-inventory-service
+    ports:
+      - "8084:8084"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/flightdeck_sample
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgrespassword
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - flightdeck-net
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      args:
+        MODULE_NAME: sample-application/notification-service
+        MODULE_PATH: sample-application/notification-service
+    container_name: flightdeck-notification-service
+    ports:
+      - "8085:8085"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_AUTO_STARTUP: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    depends_on:
+      kafka:
+        condition: service_started
+      otel-collector:
+        condition: service_started
+    networks:
+      - flightdeck-net
+
+  # -------------------------------------------------------------
+  # Flightdeck Core Platform Backend
+  # -------------------------------------------------------------
+  flightdeck-backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      args:
+        MODULE_NAME: flightdeck-backend
+        MODULE_PATH: flightdeck-backend
+    container_name: flightdeck-core-backend
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/flightdeck_sample
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: postgrespassword
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_AUTO_STARTUP: "true"
+      API_GATEWAY_URL: http://api-gateway:8081
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_started
+    networks:
+      flightdeck-net:
+        aliases:
+          - blackbox-backend
+
+  # -------------------------------------------------------------
+  # Flightdeck React Frontend Dashboard
+  # -------------------------------------------------------------
+  flightdeck-frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: flightdeck-react-dashboard
+    ports:
+      - "3000:80"
+    depends_on:
+      - flightdeck-backend
+    networks:
+      flightdeck-net:
+        aliases:
+          - flightdeck-frontend
+
+networks:
+  flightdeck-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

@@ -1,0 +1,10 @@
+{
+  "customerId": "cust-bob",
+  "items": [
+    {
+      "productId": "PROD-2",
+      "quantity": 1,
+      "price": 149.99
+    }
+  ]
+}

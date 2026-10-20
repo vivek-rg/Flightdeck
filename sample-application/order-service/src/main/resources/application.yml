@@ -1,0 +1,50 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: order-service
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:orderdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL}
+    driverClassName: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:org.h2.Driver}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        max.block.ms: 500
+
+otel:
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}
+
+services:
+  payment-service:
+    url: ${PAYMENT_SERVICE_URL:http://localhost:8083}
+  inventory-service:
+    url: ${INVENTORY_SERVICE_URL:http://localhost:8084}
+
+blackbox:
+  dev-mode:
+    enabled: true
+  tracing:
+    enabled: true
+  kafka:
+    orders-topic: orders.created
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

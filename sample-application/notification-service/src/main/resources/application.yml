@@ -1,0 +1,33 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: notification-service
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: notification-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-startup: ${KAFKA_AUTO_STARTUP:false}
+
+otel:
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318}
+
+blackbox:
+  dev-mode:
+    enabled: true
+  tracing:
+    enabled: true
+  kafka:
+    orders-topic: orders.created
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

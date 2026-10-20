@@ -1,0 +1,10 @@
+{
+  "customerId": "cust-alice",
+  "items": [
+    {
+      "productId": "PROD-1",
+      "quantity": 2,
+      "price": 99.99
+    }
+  ]
+}

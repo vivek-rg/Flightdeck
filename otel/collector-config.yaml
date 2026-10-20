@@ -1,0 +1,47 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 500ms
+    send_batch_size: 64
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+exporters:
+  debug:
+    verbosity: detailed
+
+  # Primary Telemetry Gateway: Forward spans directly to Kafka topic flightdeck.telemetry
+  kafka:
+    brokers:
+      - kafka:9092
+    protocol_version: 2.8.0
+    topic: flightdeck.telemetry
+    producer:
+      max_message_bytes: 1000000
+    encoding: otlp_json
+
+  # Direct HTTP fallback exporter forwarding normalized spans to Flightdeck REST Ingest
+  otlphttp/flightdeck:
+    endpoint: http://blackbox-backend:8080/api/telemetry
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [kafka, otlphttp/flightdeck, debug]
+
+  telemetry:
+    logs:
+      level: info

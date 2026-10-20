@@ -1,0 +1,64 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: flightdeck-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:h2:mem:flightdeckdb;DB_CLOSE_DELAY=-1;MODE=PostgreSQL}
+    driverClassName: ${SPRING_DATASOURCE_DRIVER_CLASS_NAME:org.h2.Driver}
+    username: ${SPRING_DATASOURCE_USERNAME:sa}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: 1000ms
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: flightdeck-telemetry-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-startup: ${KAFKA_AUTO_STARTUP:false}
+
+flightdeck:
+  jwt:
+    secret: "flightdeck-super-secure-secret-key-that-is-long-enough-32bytes!"
+    expiration-ms: 86400000 # 24 hours
+  kafka:
+    telemetry-topic: flightdeck.telemetry
+    events-topic: flightdeck.events
+    incidents-topic: flightdeck.incidents
+    replay-topic: flightdeck.replay
+
+blackbox:
+  jwt:
+    secret: "flightdeck-super-secure-secret-key-that-is-long-enough-32bytes!"
+    expiration-ms: 86400000 # 24 hours
+  kafka:
+    telemetry-topic: flightdeck.telemetry
+    events-topic: flightdeck.events
+    incidents-topic: flightdeck.incidents
+    replay-topic: flightdeck.replay
+
+services:
+  api-gateway:
+    url: ${API_GATEWAY_URL:http://localhost:8081}
+
+groq:
+  api:
+    key: ${GROQ_API_KEY:}
+    url: ${GROQ_API_URL:https://api.groq.com/openai/v1/chat/completions}
+  model: ${GROQ_MODEL:llama-3.1-70b-versatile}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics

@@ -1,0 +1,35 @@
+# Multi-stage Dockerfile for Spring Boot services
+FROM eclipse-temurin:17-jdk-alpine AS builder
+WORKDIR /workspace
+
+# Copy parent and module pom files
+COPY pom.xml ./
+COPY sample-application/pom.xml ./sample-application/
+COPY sample-application/sample-common/pom.xml ./sample-application/sample-common/
+COPY sample-application/api-gateway/pom.xml ./sample-application/api-gateway/
+COPY sample-application/order-service/pom.xml ./sample-application/order-service/
+COPY sample-application/payment-service/pom.xml ./sample-application/payment-service/
+COPY sample-application/inventory-service/pom.xml ./sample-application/inventory-service/
+COPY sample-application/notification-service/pom.xml ./sample-application/notification-service/
+COPY flightdeck-backend/pom.xml ./flightdeck-backend/
+
+# Copy sources
+COPY sample-application/sample-common/src ./sample-application/sample-common/src
+COPY sample-application/api-gateway/src ./sample-application/api-gateway/src
+COPY sample-application/order-service/src ./sample-application/order-service/src
+COPY sample-application/payment-service/src ./sample-application/payment-service/src
+COPY sample-application/inventory-service/src ./sample-application/inventory-service/src
+COPY sample-application/notification-service/src ./sample-application/notification-service/src
+COPY flightdeck-backend/src ./flightdeck-backend/src
+
+ARG MODULE_NAME=flightdeck-backend
+RUN apk add --no-cache maven
+RUN mvn clean package -pl ${MODULE_NAME} -am -DskipTests
+
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+ARG MODULE_PATH=flightdeck-backend
+COPY --from=builder /workspace/${MODULE_PATH}/target/*.jar app.jar
+
+ENV JAVA_OPTS="-Xms256m -Xmx512m"
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar app.jar"]
